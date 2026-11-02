@@ -1,6 +1,6 @@
 {
   "name": "pi-aim",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Goal tracking for pi with an independently resolved evaluator model.",
   "type": "module",
   "license": "MIT",
