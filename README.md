@@ -68,3 +68,17 @@ PI_AIM_LIVE=1 PI_AIM_MODELS=provider/model-id,... bun run test:live
 bun install
 bun fmt --check && bun run lint && bun run typecheck && bun run test
 ```
+
+## Release
+
+Publishing runs from `.github/workflows/publish.yml` with npm trusted publishing (OIDC, no token, automatic provenance).
+
+First release (`0.0.1`):
+
+1. Run the checks above and `npm pack --dry-run`. In a local checkout, temporarily set `version` in `package.json` to `0.0.1-stage.0` and run `npm publish --tag stage` from an authenticated terminal. Restore `0.0.1` without committing the change.
+2. On npmjs.com, configure a GitHub Actions trusted publisher with owner `mkusaka`, repository `pi-aim` and workflow filename `publish.yml`. Allow direct `npm publish`.
+3. Push tag `v0.0.1` for the release commit within two days of step 2.
+
+The placeholder lets npm create the package before [trusted publishing can be configured](https://docs.npmjs.com/cli/v11/commands/npm-trust/#prerequisites); it stays on the `stage` dist-tag, so `latest` starts at `0.0.1`.
+
+Later releases: bump `version`, run `bun install` and the checks, commit, and push the matching `vX.Y.Z` tag. The workflow reruns the checks, verifies that the tag matches `package.json`, and skips versions already on npm.
