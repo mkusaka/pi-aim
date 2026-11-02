@@ -1,1 +1,70 @@
 # pi-aim
+
+Codex-style goals for [pi](https://pi.dev), where completion is checked by an evaluator model instead of trusted from the worker.
+
+## Install
+
+```sh
+pi install npm:pi-aim
+```
+
+## How it works
+
+- `/goal <objective>` resolves the evaluator model, saves the goal in the session and starts working.
+- While the goal is active, every finished run is followed by a continuation prompt, so the agent keeps going across turns.
+- The agent calls the `update_goal` tool:
+  - `complete`: the evaluator judges the objective against the tool calls and outputs recorded since the goal started (not the agent's own summary). `verified` completes the goal; `incomplete` or `inconclusive` is returned to the agent as an error and work continues. If the evaluation itself fails, the goal is blocked; it is never marked complete without a verdict.
+  - `blocked`: the agent is stuck on the same blocker for three turns.
+- Escape pauses the goal. Three consecutive runs without any tool work also pause it.
+- The footer shows `goal: active|paused|blocked`.
+
+## Commands
+
+- `/goal <objective>` starts (or replaces) a goal.
+- `/goal status` shows the goal and re-checks that the saved evaluator is still available (it is never re-selected).
+- `/goal resume` resumes a paused or blocked goal.
+- `/goal clear` removes the goal.
+
+```
+Goal: Implement authentication
+Status: Active
+Worker: openai/gpt-6-luna
+Evaluator: openai/gpt-6-luna
+Evaluator selection: worker
+Evaluator reason: same model as worker
+Verification: hybrid
+```
+
+## Configuration
+
+Optional `~/.pi/agent/pi-aim.json` (or under `PI_CODING_AGENT_DIR`). Defaults:
+
+```json
+{
+  "verification": {
+    "mode": "hybrid",
+    "model": "worker",
+    "thinkingLevel": "low",
+    "timeoutMs": 60000,
+    "maxAttempts": 2,
+    "failClosed": true
+  }
+}
+```
+
+- `model`: `"worker"` (the model active when the goal starts) or an explicit `"provider/modelId"`. Either must be authenticated, accept text and have a 32k+ context window; otherwise the goal is blocked. The choice is saved and never changes for that goal.
+- `mode: "deterministic"` never selects or calls an LLM. Deterministic checks are not implemented yet, so such goals start blocked rather than trusting the agent. `hybrid` and `llm` currently behave the same.
+- Invalid settings block the goal instead of falling back to defaults.
+
+## Checking the evaluator prompt against real models
+
+```sh
+PI_AIM_LIVE=1 PI_AIM_MODELS=provider/model-id,... bun run test:live
+```
+
+## Development
+
+```sh
+bun install
+bun fmt --check && bun run lint && bun run typecheck && bun run test
+```

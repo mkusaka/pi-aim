@@ -1,0 +1,58 @@
+{
+  "name": "pi-aim",
+  "version": "0.0.1",
+  "description": "Goal tracking for pi with an independently resolved evaluator model.",
+  "type": "module",
+  "license": "MIT",
+  "author": "mkusaka",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mkusaka/pi-aim.git"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "packageManager": "bun@1.4.4",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "goal",
+    "evaluator"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "bun check",
+    "fmt": "bun fmt --no-script",
+    "lint": "oxlint",
+    "test": "node --test \"tests/unit/*.test.ts\" \"tests/integration/*.test.ts\"",
+    "test:live": "node --test \"tests/live/*.test.ts\""
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@types/node": "24.19.2",
+    "oxlint": "1.89.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  }
+}
