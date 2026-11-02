@@ -190,13 +190,31 @@ export async function goalStatus(ctx: ExtensionContext, goal: GoalState) {
   ].join("\n");
 }
 
-const showStatus = (ctx: ExtensionContext, goal: GoalState | null) =>
-  ctx.ui.setStatus(
-    "pi-aim",
-    goal && goal.status !== "complete" ? `goal: ${goal.status}` : undefined,
-  );
+const footerChars = 40;
 
 export default function aim(pi: ExtensionAPI) {
+  let detailsOpen = false;
+  /** Footer: status and the start of the objective. alt+g toggles the full goal above the editor. */
+  const showStatus = (ctx: ExtensionContext, goal: GoalState | null) => {
+    const shown = goal && goal.status !== "complete" ? goal : null;
+    const objective = shown?.objective.replace(/\s+/g, " ") ?? "";
+    ctx.ui.setStatus(
+      "pi-aim",
+      shown
+        ? `goal: ${shown.status} · ${objective.length > footerChars ? `${objective.slice(0, footerChars)}…` : objective}`
+        : undefined,
+    );
+    ctx.ui.setWidget(
+      "pi-aim",
+      detailsOpen && goal
+        ? [
+            `Goal (${goal.status}${goal.reason ? `: ${goal.reason}` : ""})`,
+            ...goal.objective.split("\n"),
+            `Evaluator: ${goal.evaluator ? `${goal.evaluator.provider}/${goal.evaluator.modelId}` : "none"}`,
+          ]
+        : undefined,
+    );
+  };
   // Non-goal tool calls since the last settlement, and in total.
   let workCalls = 0;
   let workTotal = 0;
@@ -225,6 +243,14 @@ export default function aim(pi: ExtensionAPI) {
       ctx.ui.notify(`Could not start goal work: ${message(error)}`, "error");
     }
   };
+
+  pi.registerShortcut("alt+g", {
+    description: "Show or hide the full goal",
+    handler: (ctx) => {
+      detailsOpen = !detailsOpen;
+      showStatus(ctx, currentGoal(ctx));
+    },
+  });
 
   pi.on("session_start", (_event, ctx) => {
     idleRuns = 0;

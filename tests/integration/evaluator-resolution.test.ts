@@ -42,6 +42,8 @@ function harness(
   const handlers = new Map<string, (event: any, ctx: any) => any>();
   const tools = new Map<string, any>();
   const statusBar = { text: undefined as string | undefined };
+  const widget = { lines: undefined as string[] | undefined };
+  let shortcut: any;
   const registry = {
     available,
     refreshes: 0,
@@ -65,12 +67,16 @@ function harness(
       notify: (text: string) => notes.push(text),
       setStatus: (_key: string, text: string | undefined) =>
         (statusBar.text = text),
+      setWidget: (_key: string, lines: string[] | undefined) =>
+        (widget.lines = lines),
     },
   };
   let command: any;
   aim({
     registerCommand: (_: string, options: any) => (command = options),
     registerTool: (tool: any) => tools.set(tool.name, tool),
+    registerShortcut: (key: string, options: any) =>
+      (shortcut = { key, ...options }),
     on: (name: string, handler: any) => handlers.set(name, handler),
     appendEntry: (customType: string, data: unknown) =>
       entries.push({ type: "custom", customType, data }),
@@ -88,6 +94,11 @@ function harness(
     sent,
     prompts,
     statusBar,
+    widget,
+    toggleDetails: () => {
+      assert.equal(shortcut.key, "alt+g");
+      return shortcut.handler(ctx);
+    },
     goal: (args: string) => command.handler(args, ctx),
     tool: (name: string, params: any = {}) =>
       tools.get(name).execute("call", params, undefined, undefined, ctx),
@@ -156,7 +167,7 @@ test("/goal starts work, shows status, and resolves the worker model as evaluato
   assert.doesNotMatch(JSON.stringify(goal), /apiKey|headers|secret/i);
   assert.equal(h.sent.length, 1);
   assert.match(h.sent[0].content, /Implement authentication/);
-  assert.equal(h.statusBar.text, "goal: active");
+  assert.equal(h.statusBar.text, "goal: active · Implement authentication");
   await h.goal("status");
   for (const line of [
     /^Goal: Implement authentication$/m,
@@ -185,7 +196,7 @@ test("Worker変更・Registry更新・再起動後も保存済みモデルを再
   // Restart: a fresh extension instance over the same session entries.
   const restarted = harness(h.registry.available, { entries: h.entries });
   await restarted.emit("session_start");
-  assert.equal(restarted.statusBar.text, "goal: active");
+  assert.equal(restarted.statusBar.text, "goal: active · Ship it");
   await restarted.goal("status");
   assert.deepEqual(currentGoal(restarted.ctx), saved);
   assert.match(restarted.notes.at(-1)!, /Status: Active/);
@@ -289,7 +300,7 @@ test("Workerの blocked 申告で停止し、/goal resume で再開", async () =
   await h.goal("Deploy");
   await h.tool("update_goal", { status: "blocked", reason: "needs creds" });
   assert.equal(currentGoal(h.ctx)!.reason, "needs creds");
-  assert.equal(h.statusBar.text, "goal: blocked");
+  assert.equal(h.statusBar.text, "goal: blocked · Deploy");
   await h.goal("resume");
   assert.equal(currentGoal(h.ctx)!.status, "active");
   assert.equal(currentGoal(h.ctx)!.reason, undefined);
@@ -304,7 +315,7 @@ test("Escape で中断 → paused、自動では再開しない", async () => {
   assert.equal(currentGoal(h.ctx)!.status, "paused");
   assert.equal(currentGoal(h.ctx)!.reason, "interrupted");
   assert.match(h.sent.at(-1).content, /paused the goal/);
-  assert.equal(h.statusBar.text, "goal: paused");
+  assert.equal(h.statusBar.text, "goal: paused · Refactor");
   assert.equal(await h.run([["bash", {}, "x"]]), undefined);
 });
 
@@ -391,4 +402,26 @@ test("恒久エラー（認証失効など）は再試行せず停止", async ()
     EvaluatorError,
   );
   assert.equal(registry.calls.length, 1);
+});
+
+test("フッターは目的を40字で切り、alt+g で全文を出し入れする", async () => {
+  const h = harness([model("openai", "gpt-6-luna")]);
+  const objective = `Migrate the billing service\nto the new payments API ${"x".repeat(60)}`;
+  await h.goal(objective);
+  assert.equal(
+    h.statusBar.text,
+    `goal: active · ${objective.replace("\n", " ").slice(0, 40)}…`,
+  );
+  assert.equal(h.widget.lines, undefined);
+  h.toggleDetails();
+  assert.deepEqual(h.widget.lines, [
+    "Goal (active)",
+    ...objective.split("\n"),
+    "Evaluator: openai/gpt-6-luna",
+  ]);
+  // The open panel follows state changes.
+  await h.tool("update_goal", { status: "blocked", reason: "needs creds" });
+  assert.equal(h.widget.lines![0], "Goal (blocked: needs creds)");
+  h.toggleDetails();
+  assert.equal(h.widget.lines, undefined);
 });
