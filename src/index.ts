@@ -262,6 +262,21 @@ export default function aim(pi: ExtensionAPI) {
     workTotal++;
   });
   // Escape is the stop button. An aborted run skips agent_before_settle, so pause here.
+  // Compaction can summarize the objective away mid-run; restate it. Compaction already
+  // resets the prompt cache, so this costs no extra cache misses. Streaming: delivered
+  // before the next model call. Idle (/compact): appended without starting a run.
+  pi.on("session_compact", (_event, ctx) => {
+    const goal = currentGoal(ctx);
+    if (goal?.status !== "active") return;
+    pi.sendMessage(
+      {
+        customType: continueType,
+        content: continuationPrompt(goal),
+        display: false,
+      },
+      { deliverAs: "steer" },
+    );
+  });
   pi.on("agent_settled", (event, ctx) => {
     const goal = currentGoal(ctx);
     if (!event.aborted || goal?.status !== "active") return;

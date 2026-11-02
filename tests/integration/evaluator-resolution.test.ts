@@ -571,3 +571,15 @@ test("Evaluator: 時間予算超過で停止し、thinkingLevel off は reasonin
   assert.equal(options.length, 1);
   assert.equal(options[0].reasoning, undefined);
 });
+
+test("compaction 後は active な goal の目的を入れ直す", async () => {
+  const h = harness([model("openai", "gpt-6-luna")]);
+  await h.goal("Keep the objective after compaction");
+  const before = h.sent.length;
+  await h.emit("session_compact", { reason: "threshold", willRetry: false });
+  assert.equal(h.sent.length, before + 1);
+  assert.match(h.sent.at(-1).content, /Keep the objective after compaction/);
+  await h.tool("update_goal", { status: "blocked", reason: "stuck" });
+  await h.emit("session_compact", { reason: "manual", willRetry: false });
+  assert.equal(h.sent.length, before + 1);
+});

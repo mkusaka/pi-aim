@@ -71,7 +71,7 @@ async function session(worker: Step[], verdicts: object[] = []) {
     tools: ["bash", "get_goal", "update_goal"],
     sessionManager: SessionManager.inMemory(dir),
     settingsManager: SettingsManager.inMemory({
-      compaction: { enabled: false },
+      compaction: { enabled: false, keepRecentTokens: 1 },
       retry: { enabled: false },
     }),
   });
@@ -188,6 +188,32 @@ test("e2e: runs without tool work pause the loop", async () => {
     await s.session.waitForIdle();
     assert.equal(s.goal().status, "paused");
     assert.match(s.goal().reason!, /no tool work/);
+  } finally {
+    await s.close();
+  }
+});
+
+test("e2e: manual compaction restates an active goal without starting a run", async () => {
+  const s = await session([
+    say("One."),
+    say("Two."),
+    say("Three."),
+    say("Summary of the work so far."),
+  ]);
+  try {
+    await s.session.prompt("/goal Survive compaction");
+    await s.session.waitForIdle();
+    // Idle-paused; mark it active again so compaction sees an active goal.
+    s.session.sessionManager.appendCustomEntry("pi-aim-goal", {
+      ...s.goal(),
+      status: "active",
+    });
+    await s.session.compact();
+    await s.session.waitForIdle();
+    const last = s.session.sessionManager.getBranch().at(-1) as any;
+    assert.equal(last.type, "custom_message", s.trace());
+    assert.equal(last.customType, "pi-aim-continue");
+    assert.match(JSON.stringify(last.content), /Survive compaction/);
   } finally {
     await s.close();
   }

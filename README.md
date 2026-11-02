@@ -15,6 +15,7 @@ pi install npm:pi-aim
 - The agent calls the `update_goal` tool:
   - `complete`: the evaluator judges the objective against the tool calls and outputs recorded since the goal started (not the agent's own summary). `verified` completes the goal; `incomplete` or `inconclusive` is returned to the agent as an error and work continues. If the evaluation itself fails, the goal is blocked; it is never marked complete without a verdict.
   - `blocked`: the agent is stuck on the same blocker for three turns.
+- After compaction, an active goal's objective is restated before the next model call, so it cannot be summarized away.
 - Escape pauses the goal. Three consecutive runs without any tool work also pause it.
 - The footer shows the status and the start of the objective (`goal: active · Migrate the billing service…`). Press `alt+g` to show or hide the full goal above the editor (on macOS the terminal must send Option as Meta).
 
