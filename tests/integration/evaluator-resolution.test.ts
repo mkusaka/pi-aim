@@ -12,6 +12,13 @@ import aim, {
 } from "../../src/index.ts";
 import { defaultEvaluatorConfig } from "../../src/verification/evaluator-schema.ts";
 import { EvaluatorError, evaluate } from "../../src/verification/evaluator.ts";
+import { listAvailableModels } from "../../src/verification/model-registry.ts";
+import { ModelResolutionError } from "../../src/verification/model-selector.ts";
+
+// Never read the developer's real ~/.pi/agent/pi-aim.json.
+process.env.PI_CODING_AGENT_DIR = await mkdtemp(
+  join(tmpdir(), "pi-aim-agent-"),
+);
 
 const model = (provider: string, id: string) =>
   ({ provider, id, input: ["text"], contextWindow: 272000 }) as any;
@@ -59,6 +66,7 @@ function harness(
       return { result: async () => next };
     },
   };
+  const send = { fail: false };
   const ctx: any = {
     model: worker,
     modelRegistry: registry,
@@ -80,7 +88,8 @@ function harness(
     on: (name: string, handler: any) => handlers.set(name, handler),
     appendEntry: (customType: string, data: unknown) =>
       entries.push({ type: "custom", customType, data }),
-    sendMessage: async (message: any) => {
+    sendMessage: (message: any) => {
+      if (send.fail) throw new Error("ctx is stale");
       sent.push(message);
     },
   } as unknown as ExtensionAPI);
@@ -100,8 +109,9 @@ function harness(
       return shortcut.handler(ctx);
     },
     goal: (args: string) => command.handler(args, ctx),
-    tool: (name: string, params: any = {}) =>
-      tools.get(name).execute("call", params, undefined, undefined, ctx),
+    send,
+    tool: (name: string, params: any = {}, signal?: AbortSignal) =>
+      tools.get(name).execute("call", params, signal, undefined, ctx),
     emit,
     /** One agent run: optional tool work, then settlement. Commits drafts like pi does. */
     async run(
@@ -424,4 +434,140 @@ test("フッターは目的を40字で切り、alt+g で全文を出し入れす
   assert.equal(h.widget.lines![0], "Goal (blocked: needs creds)");
   h.toggleDetails();
   assert.equal(h.widget.lines, undefined);
+});
+
+test("collectEvidence: goal開始前の出力を除外し、エラーを明示し、古い出力から切り詰める", async () => {
+  const h = harness([model("openai", "gpt-6-luna")], {
+    replies: [verdict("incomplete", "x"), verdict("incomplete", "y")],
+  });
+  await h.run([["bash", { command: "before goal" }, "OLD OUTPUT"]]);
+  await h.goal("Make tests pass");
+  h.entries.push({
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolCallId: "t",
+      toolName: "bash",
+      isError: true,
+      content: [{ type: "text", text: "command failed" }],
+    },
+  });
+  await assert.rejects(
+    h.tool("update_goal", { status: "complete", reason: "a" }),
+  );
+  assert.doesNotMatch(h.prompts[0]!, /OLD OUTPUT/);
+  assert.match(h.prompts[0]!, /\[bash \(error\)\] \{\}\ncommand failed/);
+  await h.run([["bash", { command: "big" }, `HEAD${"x".repeat(40000)}TAIL`]]);
+  await assert.rejects(
+    h.tool("update_goal", { status: "complete", reason: "b" }),
+  );
+  assert.match(h.prompts[1]!, /\(older output omitted\)/);
+  assert.match(h.prompts[1]!, /TAIL/);
+  assert.doesNotMatch(h.prompts[1]!, /HEAD/);
+});
+
+test("update_goal: active goal がなければ拒否", async () => {
+  const h = harness([model("openai", "gpt-6-luna")]);
+  await assert.rejects(
+    h.tool("update_goal", { status: "complete", reason: "x" }),
+    /No active goal/,
+  );
+});
+
+test("評価中の中断は goal を変えない", async () => {
+  const h = harness([model("openai", "gpt-6-luna")], {
+    replies: [verdict("verified")],
+  });
+  await h.goal("x");
+  await assert.rejects(
+    h.tool(
+      "update_goal",
+      { status: "complete", reason: "x" },
+      AbortSignal.abort(),
+    ),
+    /aborted/,
+  );
+  assert.equal(currentGoal(h.ctx)!.status, "active");
+});
+
+test("run のエラー終了 → paused", async () => {
+  const h = harness([model("openai", "gpt-6-luna")]);
+  await h.goal("x");
+  await h.run([["bash", {}, "x"]], "error");
+  assert.equal(currentGoal(h.ctx)!.status, "paused");
+  assert.equal(currentGoal(h.ctx)!.reason, "agent run failed");
+});
+
+test("/goal resume: evaluator のない goal は再開しない", async () => {
+  const h = harness([]);
+  h.registry.getError = () => "broken";
+  await h.goal("x");
+  await h.goal("resume");
+  assert.equal(currentGoal(h.ctx)!.status, "blocked");
+  assert.equal(h.sent.length, 0);
+  await h.goal("clear");
+  await h.goal("resume");
+  assert.match(h.notes.at(-1)!, /No paused or blocked goal/);
+});
+
+test("作業開始メッセージの送信失敗は通知する", async () => {
+  const h = harness([model("openai", "gpt-6-luna")]);
+  h.send.fail = true;
+  await h.goal("x");
+  assert.match(h.notes.at(-1)!, /Could not start goal work: ctx is stale/);
+});
+
+test("設定ファイルが壊れたJSON → blocked", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-aim-"));
+  try {
+    await writeFile(join(dir, "pi-aim.json"), "{ not json");
+    const h = harness([model("openai", "gpt-6-luna")]);
+    const goal = await startGoal(h.ctx, "x", join(dir, "pi-aim.json"));
+    assert.equal(goal.status, "blocked");
+    assert.match(goal.reason!, /Invalid/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Registry の refresh 失敗 → ModelResolutionError", async () => {
+  await assert.rejects(
+    listAvailableModels({
+      refresh: async () => {
+        throw new Error("network down");
+      },
+      getError: () => undefined,
+      getAvailable: () => [],
+    }),
+    (error) =>
+      error instanceof ModelResolutionError &&
+      /network down/.test(error.message),
+  );
+});
+
+test("Evaluator: 時間予算超過で停止し、thinkingLevel off は reasoning を渡さない", async () => {
+  const options: any[] = [];
+  const slow = {
+    streamSimple: (_m: any, _c: any, opts: any) => {
+      options.push(opts);
+      return {
+        result: () =>
+          new Promise((resolve) =>
+            opts.signal.addEventListener("abort", () =>
+              resolve({ stopReason: "aborted", content: [] }),
+            ),
+          ),
+      };
+    },
+  } as any;
+  await assert.rejects(
+    evaluate(slow, model("openai", "e"), input, {
+      ...defaultEvaluatorConfig,
+      thinkingLevel: "off",
+      timeoutMs: 20,
+    }),
+    /timed out after 20ms/,
+  );
+  assert.equal(options.length, 1);
+  assert.equal(options[0].reasoning, undefined);
 });
